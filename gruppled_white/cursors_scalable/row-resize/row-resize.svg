@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+<linearGradient id="body" gradientUnits="userSpaceOnUse" x1="0" y1="8" x2="0" y2="32"><stop offset="0" stop-color="#fafafa"/><stop offset="1" stop-color="#cecece"/></linearGradient>
+<g transform="translate(0 2.4)" fill="#000" stroke="#000" stroke-linejoin="round" fill-rule="evenodd">
+<g opacity="0.085" stroke-width="1"><path d="M20 8.5A15.316 15.316 0 0 1 20 31.5A15.316 15.316 0 0 1 20 8.5ZM20 16A4 4 0 1 1 20 24A4 4 0 1 1 20 16Z"/><path d="M31.5 18.6L31.5 21.4L8.5 21.4L8.5 18.6Z"/></g>
+<g opacity="0.075" stroke-width="2.5"><path d="M20 8.5A15.316 15.316 0 0 1 20 31.5A15.316 15.316 0 0 1 20 8.5ZM20 16A4 4 0 1 1 20 24A4 4 0 1 1 20 16Z"/><path d="M31.5 18.6L31.5 21.4L8.5 21.4L8.5 18.6Z"/></g>
+<g opacity="0.065" stroke-width="4"><path d="M20 8.5A15.316 15.316 0 0 1 20 31.5A15.316 15.316 0 0 1 20 8.5ZM20 16A4 4 0 1 1 20 24A4 4 0 1 1 20 16Z"/><path d="M31.5 18.6L31.5 21.4L8.5 21.4L8.5 18.6Z"/></g>
+<g opacity="0.055" stroke-width="5.5"><path d="M20 8.5A15.316 15.316 0 0 1 20 31.5A15.316 15.316 0 0 1 20 8.5ZM20 16A4 4 0 1 1 20 24A4 4 0 1 1 20 16Z"/><path d="M31.5 18.6L31.5 21.4L8.5 21.4L8.5 18.6Z"/></g>
+<g opacity="0.045" stroke-width="7"><path d="M20 8.5A15.316 15.316 0 0 1 20 31.5A15.316 15.316 0 0 1 20 8.5ZM20 16A4 4 0 1 1 20 24A4 4 0 1 1 20 16Z"/><path d="M31.5 18.6L31.5 21.4L8.5 21.4L8.5 18.6Z"/></g>
+<g opacity="0.03" stroke-width="8.5"><path d="M20 8.5A15.316 15.316 0 0 1 20 31.5A15.316 15.316 0 0 1 20 8.5ZM20 16A4 4 0 1 1 20 24A4 4 0 1 1 20 16Z"/><path d="M31.5 18.6L31.5 21.4L8.5 21.4L8.5 18.6Z"/></g>
+</g>
+<g fill="#000000" stroke="#000000" stroke-width="4" stroke-linejoin="miter" stroke-miterlimit="10" fill-rule="evenodd"><path d="M20 8.5A15.316 15.316 0 0 1 20 31.5A15.316 15.316 0 0 1 20 8.5ZM20 16A4 4 0 1 1 20 24A4 4 0 1 1 20 16Z"/><path d="M31.5 18.6L31.5 21.4L8.5 21.4L8.5 18.6Z"/></g>
+<g fill="url(#body)" fill-rule="evenodd"><path d="M20 8.5A15.316 15.316 0 0 1 20 31.5A15.316 15.316 0 0 1 20 8.5ZM20 16.2A3.8 3.8 0 1 1 20 23.8A3.8 3.8 0 1 1 20 16.2Z"/><path d="M31.5 18.6L31.5 21.4L8.5 21.4L8.5 18.6Z"/></g>
+</svg>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+<linearGradient id="body" gradientUnits="userSpaceOnUse" x1="0" y1="8" x2="0" y2="34"><stop offset="0" stop-color="#8a8a8a"/><stop offset="1" stop-color="#0c0c0c"/></linearGradient>
+<g transform="translate(0 2.4)" fill="#000" stroke="#000" stroke-linejoin="round" fill-rule="evenodd">
+<g opacity="0.085" stroke-width="1"><path d="M21.525 23.788L23.788 21.525L30.294 28.031L28.031 30.294Z"/><path d="M8.8 17A8.2 8.2 0 1 1 25.2 17A8.2 8.2 0 1 1 8.8 17ZM11.3 17A5.7 5.7 0 1 1 22.7 17A5.7 5.7 0 1 1 11.3 17Z"/></g>
+<g opacity="0.075" stroke-width="2.5"><path d="M21.525 23.788L23.788 21.525L30.294 28.031L28.031 30.294Z"/><path d="M8.8 17A8.2 8.2 0 1 1 25.2 17A8.2 8.2 0 1 1 8.8 17ZM11.3 17A5.7 5.7 0 1 1 22.7 17A5.7 5.7 0 1 1 11.3 17Z"/></g>
+<g opacity="0.065" stroke-width="4"><path d="M21.525 23.788L23.788 21.525L30.294 28.031L28.031 30.294Z"/><path d="M8.8 17A8.2 8.2 0 1 1 25.2 17A8.2 8.2 0 1 1 8.8 17ZM11.3 17A5.7 5.7 0 1 1 22.7 17A5.7 5.7 0 1 1 11.3 17Z"/></g>
+<g opacity="0.055" stroke-width="5.5"><path d="M21.525 23.788L23.788 21.525L30.294 28.031L28.031 30.294Z"/><path d="M8.8 17A8.2 8.2 0 1 1 25.2 17A8.2 8.2 0 1 1 8.8 17ZM11.3 17A5.7 5.7 0 1 1 22.7 17A5.7 5.7 0 1 1 11.3 17Z"/></g>
+<g opacity="0.045" stroke-width="7"><path d="M21.525 23.788L23.788 21.525L30.294 28.031L28.031 30.294Z"/><path d="M8.8 17A8.2 8.2 0 1 1 25.2 17A8.2 8.2 0 1 1 8.8 17ZM11.3 17A5.7 5.7 0 1 1 22.7 17A5.7 5.7 0 1 1 11.3 17Z"/></g>
+<g opacity="0.03" stroke-width="8.5"><path d="M21.525 23.788L23.788 21.525L30.294 28.031L28.031 30.294Z"/><path d="M8.8 17A8.2 8.2 0 1 1 25.2 17A8.2 8.2 0 1 1 8.8 17ZM11.3 17A5.7 5.7 0 1 1 22.7 17A5.7 5.7 0 1 1 11.3 17Z"/></g>
+</g>
+<g fill="#ffffff" stroke="#ffffff" stroke-width="4" stroke-linejoin="miter" stroke-miterlimit="10" fill-rule="evenodd"><path d="M21.525 23.788L23.788 21.525L30.294 28.031L28.031 30.294Z"/><path d="M8.8 17A8.2 8.2 0 1 1 25.2 17A8.2 8.2 0 1 1 8.8 17ZM11.3 17A5.7 5.7 0 1 1 22.7 17A5.7 5.7 0 1 1 11.3 17Z"/></g>
+<g fill="url(#body)" fill-rule="evenodd"><path d="M21.525 23.788L23.788 21.525L30.294 28.031L28.031 30.294Z"/><path d="M8.8 17A8.2 8.2 0 1 1 25.2 17A8.2 8.2 0 1 1 8.8 17ZM11.3 17A5.7 5.7 0 1 1 22.7 17A5.7 5.7 0 1 1 11.3 17Z"/></g>
+<path d="M14 17L20 17" fill="none" stroke="#8fd03c" stroke-width="1.875" stroke-linecap="butt"/>
+</svg>

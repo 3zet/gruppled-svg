@@ -1,0 +1,5 @@
+[Icon Theme]
+Name=Gruppled Black
+Comment=Gruppled cursors, redrawn as SVG
+Example=default
+Inherits=breeze_cursors
