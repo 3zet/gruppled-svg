@@ -22,3 +22,12 @@ Use `~/.icons`: the Plasma cursor settings module does not look in
 
 The sizes offered in System Settings come from the Xcursor files; change
 `XCURSOR_SIZES` in `build.py` to add or remove sizes.
+
+## Credits and licence
+
+Based on **Gruppled Cursors** by gruppler (2008): https://store.kde.org/p/999974
+The original shipped 39 px bitmaps only; every cursor here was redrawn as SVG
+from those bitmaps, and several missing shapes were added in the same style
+(`grabbing`, `zoom-in`, `zoom-out`, `context-menu`, `vertical-text`, `right_ptr`).
+
+Licence: GNU GPL v2, same as the original — see `COPYING`.
