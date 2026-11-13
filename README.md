@@ -1,3 +1,5 @@
+<img width="1488" height="688" alt="preview" src="https://github.com/user-attachments/assets/ca09d90c-1b96-4b29-a71f-a63a33b85031" />
+
 # Gruppled — SVG edition
 
 A vector rebuild of the Gruppled cursor themes (original bitmaps: gruppler, 2008, GPL v2),
