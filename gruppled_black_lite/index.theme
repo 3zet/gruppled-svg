@@ -1,0 +1,5 @@
+[Icon Theme]
+Name=Gruppled Black Lite
+Comment=Gruppled cursors, thinner version, redrawn as SVG
+Example=default
+Inherits=breeze_cursors
