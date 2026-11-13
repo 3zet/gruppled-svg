@@ -26,8 +26,10 @@ The sizes offered in System Settings come from the Xcursor files; change
 ## Credits and licence
 
 Based on **Gruppled Cursors** by gruppler (2008): https://store.kde.org/p/999974
-The original shipped 39 px bitmaps only; every cursor here was redrawn as SVG
-from those bitmaps, and several missing shapes were added in the same style
-(`grabbing`, `zoom-in`, `zoom-out`, `context-menu`, `vertical-text`, `right_ptr`).
+The original shipped 39 px bitmaps only. Every cursor here was rebuilt as SVG by
+fitting curves to those bitmaps (shape, stroke width, round joins, gradient,
+shadow), so at cursor size 24 the result lands on the same pixels as the
+original. Several missing shapes were added in the same style (`grabbing`,
+`zoom-in`, `zoom-out`, `context-menu`, `vertical-text`, `right_ptr`).
 
 Licence: GNU GPL v2, same as the original — see `COPYING`.

@@ -13,244 +13,323 @@ Only needs Python 3 and `rsvg-convert` (librsvg) for the Xcursor fallback.
 Pass --no-xcursor to skip the raster fallback (then use
 `kcursorgen --svg-theme-to-xcursor` from Plasma 6.3+ instead).
 
+Geometry
+--------
+All numbers below were measured from the original 39/40 px bitmaps (least-squares
+fit of the shapes to the sub-pixel outline), so at cursor size 24 the SVGs land on
+the same pixels as the originals.  The originals were drawn in Inkscape and the
+shapes are rebuilt the same way:
+
+  * every shape is one path, filled with a vertical gradient spanning its bounding
+    box and stroked on top with *round* joins;
+  * the drop ("teardrop") is a circle whose top node was pulled out into a cusp,
+    so its sides are gentle curves, not straight tangents;
+  * the "eye" of the double arrows is a circle with two opposite nodes pulled out;
+    the four-way star is the union of two eyes.
+
 Original bitmap theme: Gruppled by gruppler (2008), GPL v2.
 """
-import json, math, os, shutil, struct, subprocess, sys, tempfile, zlib
+import json, math, os, shutil, struct, subprocess, sys, zlib
 
-CANVAS = 40          # svg user units; original bitmaps were 39/40 px
+CANVAS = 40          # svg user units = pixels of the original bitmaps
 NOMINAL = 24         # cursor size the 40-unit canvas stands for
 XCURSOR_SIZES = [24, 32, 36, 48, 64, 72, 96]
-OUTLINE = 2.0        # outline thickness, user units
-FRAMES, FRAME_MS = 16, 50
+FRAME_MS = 50        # original animation: 14 frames, 50 ms each
 
 THEMES = {
     "gruppled_black": dict(
-        title="Gruppled Black", outline="#ffffff", body=("#8a8a8a", "#0c0c0c"),
-        glyph="#8fd03c"),
+        title="Gruppled Black", outline="#ffffff", body=("#909090", "#050505"),
+        glyph=("#909090", "#050505")),
     "gruppled_white": dict(
-        title="Gruppled White", outline="#000000", body=("#fafafa", "#cecece"),
-        glyph="#6db035"),
+        title="Gruppled White", outline="#000000", body=("#fcfcfc", "#cecece"),
+        glyph=("#7abd43", "#4f7d2a")),
 }
 
+# measured stroke widths
+SW_DROP = 1.75       # the drop-shaped pointers
+SW = 1.67            # everything else
+SW_X = 1.46          # the X letter
+
 # ----------------------------------------------------------------------------
-# tiny path toolkit: a subpath is a list of ('M',x,y) ('L',x,y) ('A',r,large,sweep,x,y) ('Z',)
+# tiny path toolkit
+# a subpath is a list of ('M',p) ('L',p) ('C',c1,c2,p) ('A',r,large,sweep,p) ('Z',)
 
 def fmt(v):
     s = f"{v:.3f}".rstrip("0").rstrip(".")
     return "0" if s in ("-0", "") else s
+
+def pt(p):
+    return f"{fmt(p[0])} {fmt(p[1])}"
 
 def d_of(subpaths):
     out = []
     for sp in subpaths:
         for c in sp:
             if c[0] in "ML":
-                out.append(f"{c[0]}{fmt(c[1])} {fmt(c[2])}")
+                out.append(c[0] + pt(c[1]))
+            elif c[0] == "C":
+                out.append(f"C{pt(c[1])} {pt(c[2])} {pt(c[3])}")
             elif c[0] == "A":
-                out.append(f"A{fmt(c[1])} {fmt(c[1])} 0 {c[2]} {c[3]} {fmt(c[4])} {fmt(c[5])}")
+                out.append(f"A{fmt(c[1])} {fmt(c[1])} 0 {c[2]} {c[3]} {pt(c[4])}")
             else:
                 out.append("Z")
     return "".join(out)
 
 def xf(sp, rot=0.0, flip=False, tx=0.0, ty=0.0):
-    """mirror in x (optional), rotate by `rot` degrees (clockwise on screen), translate."""
+    """mirror in x (optional), rotate by `rot` degrees (clockwise on screen), translate"""
     a = math.radians(rot); ca, sa = math.cos(a), math.sin(a)
-    def p(x, y):
+    def p(q):
+        x, y = q
         if flip: x = -x
         return (x * ca - y * sa + tx, x * sa + y * ca + ty)
     out = []
     for c in sp:
         if c[0] in "ML":
-            out.append((c[0],) + p(c[1], c[2]))
+            out.append((c[0], p(c[1])))
+        elif c[0] == "C":
+            out.append(("C", p(c[1]), p(c[2]), p(c[3])))
         elif c[0] == "A":
-            out.append(("A", c[1], c[2], c[3] ^ (1 if flip else 0)) + p(c[4], c[5]))
+            out.append(("A", c[1], c[2], c[3] ^ (1 if flip else 0), p(c[4])))
         else:
             out.append(c)
     return out
 
+def place(subpaths, rot=0.0, tx=0.0, ty=0.0, flip=False):
+    return [xf(sp, rot, flip, tx, ty) for sp in subpaths]
+
 def circle(cx, cy, r):
-    return [("M", cx - r, cy), ("A", r, 1, 1, cx + r, cy), ("A", r, 1, 1, cx - r, cy), ("Z",)]
+    return [("M", (cx - r, cy)), ("A", r, 1, 1, (cx + r, cy)), ("A", r, 1, 1, (cx - r, cy)), ("Z",)]
 
 def poly(pts):
-    return [("M",) + pts[0]] + [("L",) + p for p in pts[1:]] + [("Z",)]
+    return [("M", pts[0])] + [("L", p) for p in pts[1:]] + [("Z",)]
+
+def rect(x0, y0, x1, y1):
+    return poly([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
 
 def bar(hw, hl):
-    """axis-aligned vertical bar centred on the origin"""
-    return poly([(-hw, -hl), (hw, -hl), (hw, hl), (-hw, hl)])
+    """vertical bar centred on the origin"""
+    return rect(-hw, -hl, hw, hl)
 
-def teardrop(cx, cy, px, py, r):
-    """circle (cx,cy,r) joined by its two tangents to the tip (px,py)"""
-    vx, vy = px - cx, py - cy
-    L = math.hypot(vx, vy); phi = math.atan2(vy, vx); g = math.acos(r / L)
-    t1 = (cx + r * math.cos(phi + g), cy + r * math.sin(phi + g))
-    t2 = (cx + r * math.cos(phi - g), cy + r * math.sin(phi - g))
-    return [("M", px, py), ("L",) + t1, ("A", r, 1, 1) + t2, ("Z",)]
+# cubic Bezier helpers (a segment is its four control points)
+def bez(seg, t):
+    (x0, y0), (x1, y1), (x2, y2), (x3, y3) = seg; u = 1 - t
+    return (u*u*u*x0 + 3*u*u*t*x1 + 3*u*t*t*x2 + t*t*t*x3,
+            u*u*u*y0 + 3*u*u*t*y1 + 3*u*t*t*y2 + t*t*t*y3)
 
-def lens(a, b):
-    rho = (a * a + b * b) / (2 * b)
-    return [("M", -a, 0), ("A", rho, 0, 1, a, 0), ("A", rho, 0, 1, -a, 0), ("Z",)]
+def split(seg, t):
+    l = lambda a, b: (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+    p0, p1, p2, p3 = seg
+    a, b, c = l(p0, p1), l(p1, p2), l(p2, p3); d, e = l(a, b), l(b, c); f = l(d, e)
+    return (p0, a, d, f), (f, e, c, p3)
 
-def star(a, d):
-    """four-pointed star, tips at distance a, concave sides passing (d,d)"""
-    c = (a * a - 2 * d * d) / (2 * a - 4 * d)
-    r = math.sqrt(2) * (c - d)
-    pts = [(a, 0), (0, a), (-a, 0), (0, -a)]
-    sp = [("M",) + pts[0]]
-    for q in pts[1:] + pts[:1]:
-        sp.append(("A", r, 0, 0) + q)
-    return sp + [("Z",)]
+def solve(seg, fn):
+    """parameter where fn(point) crosses zero (fn < 0 at t=0, > 0 at t=1)"""
+    lo, hi = 0.0, 1.0
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if fn(bez(seg, mid)) < 0: lo = mid
+        else: hi = mid
+    return (lo + hi) / 2
+
+def rev(seg): return seg[::-1]
+def mapseg(seg, f): return tuple(f(p) for p in seg)
+def C(seg): return ("C", seg[1], seg[2], seg[3])
 
 # ----------------------------------------------------------------------------
-# cursor building blocks
+# the shapes of the original theme (centred on the origin)
 
-TD_R, TD_L = 7.5, 15.1                      # teardrop body radius / centre-to-tip (fill shape)
-TD_OUT = TD_L * (1 + OUTLINE / TD_R)        # centre to outer (outlined) tip
-RING_HOLE, RING_OUT = 3.0, 4.7              # see-through hole and ring radius of the big ring
-C = CANVAS / 2
+DROP_R, DROP_L, DROP_K, DROP_RING = 8.0, 18.0, 0.81, 4.0
+def drop(ring=True):
+    """circle of radius R; top node pulled up to a cusp at distance L; the side nodes keep
+    their handles (K*R), which is what makes the flanks bulge slightly"""
+    R, L, k = DROP_R, DROP_L, DROP_K * DROP_R
+    tip = (0.0, -L)
+    sp = [("M", tip), ("C", tip, (R, -k), (R, 0)), ("A", R, 0, 1, (0, R)), ("A", R, 0, 1, (-R, 0)),
+          ("C", (-R, -k), tip, tip), ("Z",)]
+    return [sp, circle(0, 0, DROP_RING)] if ring else [sp]
+
+EYE_A, EYE_B, EYE_H, EYE_RING = 13.5, 5.95, 4.85, 3.0
+EYE_Q = ((0.0, -EYE_B), (EYE_H, -EYE_B), (EYE_A, 0.0), (EYE_A, 0.0))     # top node -> right tip
+def eye():
+    a, b, h = EYE_A, EYE_B, EYE_H
+    sp = [("M", (-a, 0)), ("C", (-a, 0), (-h, -b), (0, -b)), ("C", (h, -b), (a, 0), (a, 0)),
+          ("C", (a, 0), (h, b), (0, b)), ("C", (-h, b), (-a, 0), (-a, 0)), ("Z",)]
+    return [sp, circle(0, 0, EYE_RING)]
+
+def star():
+    """union of a horizontal and a vertical eye"""
+    t = solve(EYE_Q, lambda p: p[0] + p[1])            # where the flank meets the diagonal
+    s1 = split(EYE_Q, t)[1]                              # diagonal -> right tip
+    s0 = rev(mapseg(s1, lambda p: (-p[1], -p[0])))       # top tip -> diagonal (mirror image)
+    sp = [("M", s0[0])]
+    for q in range(4):
+        r = lambda p, q=q: xf([("M", p)], 90 * q)[0][1]
+        sp += [C(mapseg(s0, r)), C(mapseg(s1, r))]
+    return [sp + [("Z",)], circle(0, 0, 3.1)]
+
+SPLIT_HW, SPLIT_HL = 2.1, 12.65
+def split_eye():
+    """union of the eye and a bar across it; the ring is cut into two slivers by the bar"""
+    hw, hl, r = SPLIT_HW, SPLIT_HL, EYE_RING
+    t = solve(EYE_Q, lambda p: p[0] - hw)
+    tr = split(EYE_Q, t)[1]                              # (hw, y*) -> right tip, upper side
+    mx = lambda p: (-p[0], p[1]); my = lambda p: (p[0], -p[1]); mxy = lambda p: (-p[0], -p[1])
+    tl, br, bl = rev(mapseg(tr, mx)), rev(mapseg(tr, my)), mapseg(tr, mxy)
+    ys = tr[0][1]
+    sp = [("M", tl[0]), C(tl), ("L", (-hw, -hl)), ("L", (hw, -hl)), ("L", (hw, ys)), C(tr),
+          C(br), ("L", (hw, hl)), ("L", (-hw, hl)), ("L", (-hw, -ys)), C(bl), ("Z",)]
+    c = math.sqrt(r * r - hw * hw)
+    return [sp, [("M", (hw, -c)), ("A", r, 0, 1, (hw, c)), ("Z",)],
+                [("M", (-hw, c)), ("A", r, 0, 1, (-hw, -c)), ("Z",)]]
+
+BAR_HW, BAR_HL = 2.165, 9.95
+def plus():
+    h, l = BAR_HW, BAR_HL
+    return [poly([(-h, -l), (h, -l), (h, -h), (l, -h), (l, h), (h, h), (h, l), (-h, l),
+                  (-h, h), (-l, h), (-l, -h), (-h, -h)])]
+
+RING_R1, RING_R2 = 11.64, 7.28
+def no_entry():
+    """ring with a diagonal bar: the inside of the ring is cut into two D-shaped holes"""
+    hw, r = 2.24, RING_R2
+    c = math.sqrt(r * r - hw * hw)
+    holes = [[("M", (hw, -c)), ("A", r, 0, 1, (hw, c)), ("Z",)],
+             [("M", (-hw, c)), ("A", r, 0, 1, (-hw, -c)), ("Z",)]]
+    return [circle(0, 0, RING_R1)] + place(holes, 45)
+
+def target():
+    return [circle(0, 0, RING_R1), circle(0, 0, RING_R2), circle(0, 0, 2.21)]
+
+PENCIL = [poly([(10.09, 28.91), (12.43, 23.50), (26.41, 9.56), (29.54, 12.49), (15.43, 26.64)])]
+
+# the X is a double-struck serif letter; outline traced from the original
+X_LETTER = [poly([(10.67, 9.9), (20.93, 9.9), (22.56, 14.01), (25.81, 9.9), (28.38, 9.9), (23.42, 16.17),
+                  (28.69, 29.43), (21.59, 29.43), (18.7, 22.15), (18.1, 22.9), (20.69, 29.43), (18.42, 29.43),
+                  (16.59, 24.81), (12.93, 29.43), (10.36, 29.43), (15.73, 22.64)]),
+            poly([(17.84, 19.98), (14.24, 10.92), (13.34, 10.92), (17.24, 20.74)])]
+
+def magnifier():
+    """not in the original: ring with a handle, same construction as the rest"""
+    r1, r2, hw, far = 8.6, 4.9, 2.1, 16.5
+    d = math.asin(hw / r1); n = r1 * math.cos(d)
+    # handle along +x, then rotated to point down-right
+    sp = [("M", (n, -hw)), ("L", (far, -hw)), ("L", (far, hw)), ("L", (n, hw)),
+          ("A", r1, 1, 1, (n, -hw)), ("Z",)]
+    return place([sp], 45) + [circle(0, 0, r2)]
+
+# ----------------------------------------------------------------------------
+# cursors
 
 class Cur:
-    def __init__(self, hot, grad=(8, 32)):
-        self.hot, self.grad = hot, grad
-        self.parts = []      # (outline subpaths, fill subpaths)
+    def __init__(self, body, sw, hot):
+        self.body, self.sw, self.hot = body, sw, hot
         self.extra = []      # callables(theme) -> svg snippet drawn on top
-    def part(self, out, fill=None):
-        self.parts.append((out, fill if fill is not None else out)); return self
     def add(self, fn):
         self.extra.append(fn); return self
 
-def ringed(shape, hx, hy, hole=RING_HOLE, ring=RING_OUT):
-    """shape with a see-through hole surrounded by an outline-coloured ring"""
-    return ([shape, circle(hx, hy, hole + OUTLINE)], [shape, circle(hx, hy, ring)])
-
-def td_cursor(apex, direction, ring=True, grad=None):
-    """teardrop whose outlined tip sits on `apex`; `direction` = unit vector centre->tip"""
-    dx, dy = direction
-    cx, cy = apex[0] - dx * TD_OUT, apex[1] - dy * TD_OUT
-    shape = teardrop(cx, cy, cx + dx * TD_L, cy + dy * TD_L, TD_R)
-    top = min(cy - TD_R, cy + dy * TD_L); bot = max(cy + TD_R, cy + dy * TD_L)
-    c = Cur((round(apex[0]), round(apex[1])), grad or (top, bot))
+def drop_cursor(cx, cy, angle, ring=True):
+    """drop centred on (cx,cy); `angle` = how far the tip leans to the left of straight up"""
+    c = Cur(place(drop(ring), -angle, cx, cy), SW_DROP, None)
+    a = math.radians(angle); reach = DROP_L + SW_DROP / 2           # the visible tip
+    c.hot = (cx - reach * math.sin(a), cy - reach * math.cos(a))
     c.centre = (cx, cy)
-    if ring: c.part(*ringed(shape, cx, cy))
-    else:    c.part([shape])
     return c
 
-_n = math.hypot(7.5, 13.1)
-PTR_DIR = (-7.5 / _n, -13.1 / _n)            # the main pointer leans like the original
-def pointer(ring=True, flip=False):
-    if flip:
-        return td_cursor((CANVAS - 12, 4.9), (-PTR_DIR[0], PTR_DIR[1]), ring)
-    return td_cursor((12, 4.9), PTR_DIR, ring)
+def pointer(ring=True):
+    return drop_cursor(22.03, 21.88, 30, ring)
+
+def centred(body, cx, cy, rot=0, sw=SW):
+    return Cur(place(body, rot, cx, cy), sw, (cx, cy))
 
 def lerp(a, b, t):
     pa = [int(a[i:i + 2], 16) for i in (1, 3, 5)]; pb = [int(b[i:i + 2], 16) for i in (1, 3, 5)]
     return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(pa, pb))
 
-def ball(cx, cy, base, hi_top, hi_bot, r=5.0):
-    rh = r - 0.6; hy = cy - 0.3; chord = hy + 1.2
-    hw = math.sqrt(rh * rh - 1.2 * 1.2)
-    d = (f"M{fmt(cx - hw)} {fmt(chord)}A{fmt(rh)} {fmt(rh)} 0 1 1 {fmt(cx + hw)} {fmt(chord)}"
-         f"A9 9 0 0 1 {fmt(cx - hw)} {fmt(chord)}Z")
+def ball(cx, cy, base, hi, hi_edge, r=5.0):
+    """glossy ball: flat base colour with a lighter cap"""
+    s = r / 5.0
     def fn(th):
-        return (f'<linearGradient id="hi" gradientUnits="userSpaceOnUse" x1="0" y1="{fmt(hy - rh)}" x2="0" y2="{fmt(chord + 0.6)}">'
-                f'<stop offset="0" stop-color="{hi_top}"/><stop offset="1" stop-color="{hi_bot}"/></linearGradient>'
+        return (f'<radialGradient id="hi" gradientUnits="userSpaceOnUse" cx="{fmt(cx + 0.2 * s)}" cy="{fmt(cy - 3.2 * s)}" r="{fmt(4.6 * s)}">'
+                f'<stop offset="0" stop-color="{hi}"/><stop offset="1" stop-color="{hi_edge}"/></radialGradient>'
                 f'<circle cx="{fmt(cx)}" cy="{fmt(cy)}" r="{fmt(r)}" fill="{base}"/>'
-                f'<path d="{d}" fill="url(#hi)"/>')
+                f'<ellipse cx="{fmt(cx)}" cy="{fmt(cy - 1.75 * s)}" rx="{fmt(4.35 * s)}" ry="{fmt(3.1 * s)}" fill="url(#hi)"/>')
     return fn
 
-GREEN  = ("#7eb331", "#cdeb9f", "#b9e080")
-GREEN_PRESSED = ("#5d8a22", "#a8cf78", "#8fbd58")
-YELLOW = ("#e4a100", "#ffdd8c", "#ffd162")
-RED    = ("#e40000", "#ff8c8c", "#ff6262")
-GREY   = ("#706957", "#cdc9bf", "#bcb7a8")
+#         base       cap centre  cap edge
+GREEN  = ("#7eb331", "#d9f2b3", "#b4de79")
+GREEN_PRESSED = ("#5d8a22", "#bfdc98", "#93bd5c")
+YELLOW = ("#e4a100", "#ffe5a7", "#ffce58"); YELLOW_OFF = ("#706957", "#dbd9d1", "#b7b2a2")
+RED    = ("#e40000", "#ffa7a7", "#ff5858"); RED_OFF    = ("#705757", "#dbd1d1", "#b7a2a2")
 
 def glyph(kind, cx, cy, s=1.0):
-    def line(x1, y1, x2, y2, w):
-        return (f'<path d="M{fmt(cx + x1 * s)} {fmt(cy + y1 * s)}L{fmt(cx + x2 * s)} {fmt(cy + y2 * s)}" '
-                f'fill="none" stroke="{{g}}" stroke-width="{fmt(w * s)}" stroke-linecap="butt"/>')
+    """small symbol inside the ring; filled with its own top-to-bottom gradient"""
+    R = lambda x0, y0, x1, y1: rect(cx + x0 * s, cy + y0 * s, cx + x1 * s, cy + y1 * s)
+    P = lambda pts: poly([(cx + x * s, cy + y * s) for x, y in pts])
     if kind == "plus":
-        body = line(-2.4, 0, 2.4, 0, 1.5) + line(0, -2.4, 0, 2.4, 1.5)
+        sps = [R(-3, -0.9, 3, 0.9), R(-0.9, -3, 0.9, 3)]
     elif kind == "minus":
-        body = line(-2.4, 0, 2.4, 0, 1.5)
+        sps = [R(-3, -0.9, 3, 0.9)]
     elif kind == "menu":
-        body = line(-2.1, -1.3, 2.1, -1.3, 1.1) + line(-2.1, 1.3, 2.1, 1.3, 1.1)
-    elif kind == "dot":
-        body = f'<circle cx="{fmt(cx)}" cy="{fmt(cy)}" r="{fmt(1.9 * s)}" fill="{{g}}"/>'
-    elif kind == "help":
-        body = (f'<path d="M{fmt(cx - 1.35)} {fmt(cy - 1.0)}A1.4 1.4 0 1 1 {fmt(cx + 0.05)} {fmt(cy + 0.25)}L{fmt(cx + 0.05)} {fmt(cy + 0.95)}" '
-                f'fill="none" stroke="{{g}}" stroke-width="1.15"/>'
-                f'<circle cx="{fmt(cx + 0.05)}" cy="{fmt(cy + 2.15)}" r="0.65" fill="{{g}}"/>')
-    return lambda th: body.format(g=th["glyph"])
-
-def rot_parts(parts, rot, flip=False):
-    return [([xf(s, rot, flip, C, C) for s in o], [xf(s, rot, flip, C, C) for s in f]) for o, f in parts]
-
-def centred(parts_at_origin, rot=0, grad=(8, 32)):
-    c = Cur((20, 20), grad)
-    c.parts = rot_parts(parts_at_origin, rot)
-    return c
-
-LENS = lambda: ringed(lens(11.5, 5.2), 0, 0, hole=2.0, ring=3.8)
-ANNULUS = [circle(0, 0, 10.5), circle(0, 0, 8)]
+        sps = [R(-2.7, -2.4, 2.7, -1.2), R(-2.7, -0.6, 2.7, 0.6), R(-2.7, 1.2, 2.7, 2.4)]
+    elif kind == "link":       # a bold diagonal cross
+        sps = [xf(rect(-3.3 * s, -0.95 * s, 3.3 * s, 0.95 * s), r, False, cx, cy) for r in (45, -45)]
+    elif kind == "help":       # bold "?" that overlaps the ring, as in the original
+        arch = [("M", (cx - 3.75 * s, cy - 1.85 * s)), ("L", (cx - 3.75 * s, cy - 2.4 * s)),
+                ("C", (cx - 3.0 * s, cy - 3.3 * s), (cx - 1.6 * s, cy - 3.7 * s), (cx - 0.2 * s, cy - 3.7 * s)),
+                ("C", (cx + 1.2 * s, cy - 3.7 * s), (cx + 2.7 * s, cy - 3.3 * s), (cx + 3.45 * s, cy - 2.4 * s)),
+                ("L", (cx + 3.45 * s, cy - 1.85 * s)), ("Z",)]
+        sps = [arch, R(-3.75, -2.4, -1.95, -1.0), R(0.85, -2.4, 3.45, -0.9),
+               P([(0.85, -1.7), (3.45, -1.7), (3.45, -0.9), (0.75, 1.1), (-1.4, 1.1), (-1.4, 0.5)]),
+               R(-1.4, 0.5, 0.75, 1.75), R(-1.65, 2.25, 1.05, 4.1)]
+    return lambda th: f'<path d="{d_of(sps)}" fill="url(#glyph)"/>'
 
 def build_cursors():
     cur = {}
     # --- the pointer family ---------------------------------------------------
     cur["default"]   = pointer()
-    cur["right_ptr"] = pointer(flip=True)
-    for name, kind in (("help", "help"), ("copy", "plus"), ("alias", "dot"),
+    cur["right_ptr"] = drop_cursor(CANVAS - 22.03, 21.88, -30)
+    for name, kind in (("help", "help"), ("copy", "plus"), ("alias", "link"),
                        ("dnd-move", "minus"), ("context-menu", "menu")):
         p = pointer(); cur[name] = p.add(glyph(kind, *p.centre))
     p = pointer(ring=False); cur["pointer"]  = p.add(ball(*p.centre, *GREEN))
     p = pointer(ring=False); cur["grab"]     = p.add(ball(*p.centre, *GREEN))
-    p = pointer(ring=False); cur["grabbing"] = p.add(ball(*p.centre, *GREEN_PRESSED, r=4.1))
-    for name, col in (("progress", YELLOW), ("wait", RED)):
+    p = pointer(ring=False); cur["grabbing"] = p.add(ball(*p.centre, *GREEN_PRESSED, r=4.3))
+    for name, on, off in (("progress", YELLOW, YELLOW_OFF), ("wait", RED, RED_OFF)):
         frames = []
-        for i in range(FRAMES):
-            t = 0.9 * (0.5 - 0.5 * math.cos(2 * math.pi * i / FRAMES))
+        for i in list(range(8)) + list(range(6, 0, -1)):       # fade out and back, as the original
             p = pointer(ring=False)
-            frames.append(p.add(ball(*p.centre, *(lerp(a, b, t) for a, b in zip(col, GREY)))))
+            frames.append(p.add(ball(*p.centre, *(lerp(a, b, i / 7) for a, b in zip(on, off)))))
         cur[name] = frames
     # --- edges and corners: the drop points at the edge -----------------------
-    k = math.sqrt(0.5)
-    cur["n-resize"]  = td_cursor((20, 5),  (0, -1))
-    cur["s-resize"]  = td_cursor((20, 34), (0, 1))
-    cur["w-resize"]  = td_cursor((6, 20),  (-1, 0))
-    cur["e-resize"]  = td_cursor((34, 20), (1, 0))
-    cur["nw-resize"] = td_cursor((8, 8),   (-k, -k))
-    cur["ne-resize"] = td_cursor((32, 8),  (k, -k))
-    cur["sw-resize"] = td_cursor((8, 32),  (-k, k))
-    cur["se-resize"] = td_cursor((32, 32), (k, k))
+    cur["n-resize"]  = drop_cursor(19.50, 22.58, 0)
+    cur["s-resize"]  = drop_cursor(19.50, 12.42, 180)
+    cur["e-resize"]  = drop_cursor(14.42, 17.50, -90)
+    cur["w-resize"]  = drop_cursor(24.58, 17.50, 90)
+    cur["nw-resize"] = drop_cursor(20.68, 21.09, 45)
+    cur["ne-resize"] = drop_cursor(15.91, 21.09, -45)
+    cur["sw-resize"] = drop_cursor(20.70, 16.28, 135)
+    cur["se-resize"] = drop_cursor(15.92, 16.30, -135)
     # --- double arrows ("eyes") ------------------------------------------------
-    cur["ew-resize"]   = centred([LENS()], 0,   (15, 25))
-    cur["ns-resize"]   = centred([LENS()], 90,  (8, 32))
-    cur["nwse-resize"] = centred([LENS()], 45,  (11, 29))
-    cur["nesw-resize"] = centred([LENS()], -45, (11, 29))
-    cur["col-resize"] = centred([LENS(), ([bar(1.4, 11.5)],) * 2], 0, (8, 32))
-    cur["row-resize"] = centred([LENS(), ([bar(1.4, 11.5)],) * 2], 90, (8, 32))
-    cur["all-scroll"] = centred([ringed(star(10.6, 4.5), 0, 0, hole=2.2, ring=4.0)], 0, (9, 31))
+    cur["ew-resize"]   = centred(eye(), 19.5, 19.5, 0)
+    cur["ns-resize"]   = centred(eye(), 19.5, 17.5, 90)
+    cur["nwse-resize"] = centred(eye(), 19.5, 19.5, 45)
+    cur["nesw-resize"] = centred(eye(), 19.5, 19.5, -45)
+    cur["col-resize"]  = centred(split_eye(), 19.5, 17.5, 0)
+    cur["row-resize"]  = centred(split_eye(), 19.5, 17.5, 90)
+    cur["all-scroll"]  = centred(star(), 19.5, 17.5)
     # --- precision / text ------------------------------------------------------
-    h = 1.4
-    plus = poly([(-h, -9), (h, -9), (h, -h), (9, -h), (9, h), (h, h), (h, 9), (-h, 9),
-                 (-h, h), (-9, h), (-9, -h), (-h, -h)])
-    cur["crosshair"]     = centred([([plus],) * 2], 0, (10, 30))
-    cur["text"]          = centred([([bar(1.4, 9)],) * 2], 0, (10, 30))
-    cur["vertical-text"] = centred([([bar(1.4, 9)],) * 2], 90, (17, 23))
+    cur["crosshair"]     = centred(plus(), 19.5, 19.5)
+    cur["text"]          = centred([bar(BAR_HW, BAR_HL)], 19.5, 19.5)
+    cur["vertical-text"] = centred([bar(BAR_HW, BAR_HL)], 19.5, 19.5, 90)
     # --- circles ----------------------------------------------------------------
-    cur["not-allowed"] = centred([(ANNULUS,) * 2, ([xf(bar(1.3, 9), 45)],) * 2], 0, (9, 31))
-    cur["dotbox"]      = centred([(ANNULUS,) * 2, ([circle(0, 0, 1.6)],) * 2], 0, (9, 31))
-    cur["X_cursor"]    = centred([([xf(bar(1.6, 10), 45)],) * 2, ([xf(bar(1.6, 10), -45)],) * 2], 0, (12, 28))
+    cur["not-allowed"] = centred(no_entry(), 19.5, 19.5)
+    cur["dotbox"]      = centred(target(), 19.5, 19.5)
+    cur["X_cursor"]    = Cur(X_LETTER, SW_X, (19.5, 19.5))
     for name, kind in (("zoom-in", "plus"), ("zoom-out", "minus")):
-        z = Cur((17, 17), (8, 34))
-        ann = [circle(17, 17, 8.2), circle(17, 17, 5.7)]
-        handle = xf(bar(1.6, 4.6), -45, False, 17 + k * 12.6, 17 + k * 12.6)
-        z.part([handle]).part(ann)
-        cur[name] = z.add(glyph(kind, 17, 17, 1.25))
+        z = centred(magnifier(), 16.5, 16.5)
+        cur[name] = z.add(glyph(kind, 16.5, 16.5))
     # --- pencil -----------------------------------------------------------------
-    ux, uy, nx, ny = k, -k, k, k
-    T = (12.0, 28.0)
-    def P(along, side): return (T[0] + ux * along + nx * side, T[1] + uy * along + ny * side)
-    pen = Cur((9, 31), (11, 29))
-    pen.part([poly([T, P(2.5, -1.4), P(23, -1.4), P(23, 1.4), P(2.5, 1.4)])])
-    cur["pencil"] = pen
+    cur["pencil"] = Cur(PENCIL, SW, (9.5, 29.5))
     return cur
 
 ALIASES = {
@@ -291,25 +370,27 @@ ALIASES = {
 # ----------------------------------------------------------------------------
 # svg output
 
-SHADOW_DY = 2.4
-SHADOW_LAYERS = [(1.0, 0.085), (2.5, 0.075), (4.0, 0.065), (5.5, 0.055), (7.0, 0.045), (8.5, 0.03)]
+# Soft drop shadow without filters: the silhouette is stacked several times, each copy a
+# little wider and fainter.  Offsets and opacities were fitted to the original shadow
+# (4 px down, about 1.5 px blur, 30 % black).
+SHADOW_DY = 4.0
+_ALPHAS = [0.067, 0.044, 0.025, 0.019, 0.022, 0.023, 0.019, 0.015, 0.013, 0.011, 0.008, 0.004, 0.003, 0.003, 0.004]
+SHADOW_LAYERS = [(-0.8 + 0.3 * i, a) for i, a in enumerate(_ALPHAS)]     # (growth of the silhouette, opacity)
 
 def svg_of(c, th):
-    out_d = [d_of(o) for o, _ in c.parts]
-    fill_d = [d_of(f) for _, f in c.parts]
-    y0, y1 = c.grad
+    d = d_of(c.body)
+    grad = lambda gid, stops: (f'<linearGradient id="{gid}" x1="0" y1="0" x2="0" y2="1">'
+                               f'<stop offset="0" stop-color="{stops[0]}"/><stop offset="1" stop-color="{stops[1]}"/></linearGradient>')
     s = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{CANVAS}" height="{CANVAS}" viewBox="0 0 {CANVAS} {CANVAS}">',
-         f'<linearGradient id="body" gradientUnits="userSpaceOnUse" x1="0" y1="{fmt(y0)}" x2="0" y2="{fmt(y1)}">'
-         f'<stop offset="0" stop-color="{th["body"][0]}"/><stop offset="1" stop-color="{th["body"][1]}"/></linearGradient>']
-    # soft drop shadow without filters: stacked, widening silhouettes
+         grad("body", th["body"]) + grad("glyph", th["glyph"])]
     s.append(f'<g transform="translate(0 {SHADOW_DY})" fill="#000" stroke="#000" stroke-linejoin="round" fill-rule="evenodd">')
-    for w, a in SHADOW_LAYERS:
-        s.append(f'<g opacity="{a}" stroke-width="{fmt(w)}">' + "".join(f'<path d="{d}"/>' for d in out_d) + '</g>')
+    for grow, a in SHADOW_LAYERS:
+        w = c.sw + 2 * grow
+        stroke = f' stroke-width="{fmt(w)}"' if w > 0.01 else ' stroke="none"'
+        s.append(f'<g opacity="{a:.4f}"{stroke}><path d="{d}"/></g>')
     s.append('</g>')
-    s.append(f'<g fill="{th["outline"]}" stroke="{th["outline"]}" stroke-width="{fmt(2 * OUTLINE)}" '
-             f'stroke-linejoin="miter" stroke-miterlimit="10" fill-rule="evenodd">'
-             + "".join(f'<path d="{d}"/>' for d in out_d) + '</g>')
-    s.append('<g fill="url(#body)" fill-rule="evenodd">' + "".join(f'<path d="{d}"/>' for d in fill_d) + '</g>')
+    s.append(f'<path d="{d}" fill="url(#body)" fill-rule="evenodd" stroke="{th["outline"]}" '
+             f'stroke-width="{fmt(c.sw)}" stroke-linejoin="round"/>')
     s += [fn(th) for fn in c.extra]
     s.append('</svg>')
     return "\n".join(s) + "\n"
@@ -385,11 +466,12 @@ def build(outdir, xcursor=True):
         for name, c in cursors.items():
             frames = c if isinstance(c, list) else [c]
             sdir = os.path.join(root, "cursors_scalable", name); os.makedirs(sdir)
-            meta, files = [], []
+            meta, files, cache = [], [], {}
             for i, fr in enumerate(frames):
                 fn = f"{name}.svg" if len(frames) == 1 else f"{name}-{i + 1:02d}.svg"
                 with open(os.path.join(sdir, fn), "w") as f: f.write(svg_of(fr, th))
-                e = {"filename": fn, "hotspot_x": fr.hot[0], "hotspot_y": fr.hot[1], "nominal_size": NOMINAL}
+                e = {"filename": fn, "hotspot_x": round(fr.hot[0], 2), "hotspot_y": round(fr.hot[1], 2),
+                     "nominal_size": NOMINAL}
                 if len(frames) > 1: e["delay"] = FRAME_MS
                 meta.append(e); files.append(os.path.join(sdir, fn))
             with open(os.path.join(sdir, "metadata.json"), "w") as f:
@@ -400,7 +482,7 @@ def build(outdir, xcursor=True):
                     px = round(CANVAS * nominal / NOMINAL)
                     for fr, svg in zip(frames, files):
                         w, h, argb = rasterize(svg, px)
-                        images.append((nominal, w, h, round(fr.hot[0] * px / CANVAS), round(fr.hot[1] * px / CANVAS),
+                        images.append((nominal, w, h, int(fr.hot[0] * px / CANVAS), int(fr.hot[1] * px / CANVAS),
                                        FRAME_MS if len(frames) > 1 else 0, argb))
                 write_xcursor(os.path.join(root, "cursors", name), images)
             for al in ALIASES.get(name, "").split():
